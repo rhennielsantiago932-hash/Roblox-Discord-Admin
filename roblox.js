@@ -1,6 +1,6 @@
 const { ROBLOX_GROUP_ID } = require("./config");
 
-async function robloxRequest(path, options = {}) {
+async function robloxRequest(path) {
   const apiKey = process.env.ROBLOX_API_KEY;
 
   if (!apiKey) {
@@ -8,23 +8,19 @@ async function robloxRequest(path, options = {}) {
   }
 
   const response = await fetch(
-    https://apis.roblox.com/cloud/v2${path},
+    "https://apis.roblox.com/cloud/v2" + path,
     {
-      ...options,
       headers: {
-        "x-api-key": apiKey,
-        "Content-Type": "application/json",
-        ...options.headers
+        "x-api-key": apiKey
       }
     }
   );
 
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  const data = await response.json();
 
   if (!response.ok) {
     throw new Error(
-      data.message || Roblox API Error: ${response.status}
+      data.message || "Roblox API Error: " + response.status
     );
   }
 
@@ -51,36 +47,36 @@ async function getRobloxUser(username) {
   }
 
   const data = await response.json();
-
   return data.data?.[0] || null;
+}
+
+async function getRobloxProfile(userId) {
+  const response = await fetch(
+    "https://users.roblox.com/v1/users/" + userId
+  );
+
+  if (!response.ok) {
+    throw new Error("Roblox profile lookup failed!");
+  }
+
+  return response.json();
 }
 
 async function getGroupMember(userId) {
   const filter = encodeURIComponent(
-    user == 'users/${userId}'
+    "user == 'users/" + userId + "'"
   );
 
   const data = await robloxRequest(
-    /groups/${ROBLOX_GROUP_ID}/memberships?maxPageSize=100&filter=${filter}
+    "/groups/" + ROBLOX_GROUP_ID +
+    "/memberships?maxPageSize=10&filter=" + filter
   );
 
   return data.groupMemberships?.[0] || null;
 }
 
-async function assignRole(membershipId, roleId) {
-  return robloxRequest(
-    /groups/${ROBLOX_GROUP_ID}/memberships/${membershipId}:assignRole,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        roleId: String(roleId)
-      })
-    }
-  );
-}
-
 module.exports = {
   getRobloxUser,
-  getGroupMember,
-  assignRole
+  getRobloxProfile,
+  getGroupMember
 };
