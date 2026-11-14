@@ -1,7 +1,5 @@
 require("dotenv").config();
 
-const crypto = require("crypto");
-
 const {
   Client,
   GatewayIntentBits,
@@ -21,7 +19,6 @@ const {
 
 const {
   getRobloxUser,
-  getRobloxProfile,
   getGroupMember,
   assignGroupRole,
   unassignGroupRole
@@ -31,9 +28,6 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-const pendingVerifications = new Map();
-
-// Rank choices
 const rankChoices = [
   { name: "Owner", value: "OWNER" },
   { name: "Developer", value: "DEVELOPER" },
@@ -42,7 +36,6 @@ const rankChoices = [
   { name: "Vendor", value: "VENDOR" }
 ];
 
-// Convert rank key to Discord role name
 function getDiscordRankName(rankName) {
   return rankName
     .toLowerCase()
@@ -51,55 +44,49 @@ function getDiscordRankName(rankName) {
     .join(" ");
 }
 
-// Verify command
+// VERIFY
 const verifyCommand = new SlashCommandBuilder()
   .setName("verify")
-  .setDescription("Verify your Roblox account and group rank")
+  .setDescription("Verify your Roblox username and group membership")
   .addStringOption(option =>
     option
       .setName("username")
       .setDescription("Your Roblox username")
       .setRequired(true)
-  )
-  .addStringOption(option =>
-    option
-      .setName("code")
-      .setDescription("Your verification code")
-      .setRequired(false)
   );
 
-// Promote command
+// PROMOTE
 const promoteCommand = new SlashCommandBuilder()
   .setName("promote")
   .setDescription("Promote a Roblox group member")
   .addStringOption(option =>
     option
       .setName("username")
-      .setDescription("Roblox username of the member")
+      .setDescription("Roblox username")
       .setRequired(true)
   )
   .addStringOption(option =>
     option
       .setName("rank")
-      .setDescription("Choose the target rank")
+      .setDescription("Choose target rank")
       .setRequired(true)
       .addChoices(...rankChoices)
   );
 
-// Demote command
+// DEMOTE
 const demoteCommand = new SlashCommandBuilder()
   .setName("demote")
   .setDescription("Demote a Roblox group member")
   .addStringOption(option =>
     option
       .setName("username")
-      .setDescription("Roblox username of the member")
+      .setDescription("Roblox username")
       .setRequired(true)
   )
   .addStringOption(option =>
     option
       .setName("rank")
-      .setDescription("Choose the target rank")
+      .setDescription("Choose target rank")
       .setRequired(true)
       .addChoices(...rankChoices)
   );
@@ -157,7 +144,102 @@ client.once(Events.ClientReady, async bot => {
   }
 });
 
-// Handle rank changes
+// VERIFY MEMBER
+async function verifyMember(interaction) {
+  const username = interaction.options
+    .getString("username")
+    .trim();
+
+  const user = await getRobloxUser(username);
+
+  if (!user) {
+    return interaction.editReply(
+      "Roblox account not found. Check your username."
+    );
+  }
+
+  const membership = await getGroupMember(user.id);
+
+  if (!membership) {
+    return interaction.editReply(
+      "You are not a member of our Roblox group. Join first!"
+    );
+  }
+
+  const rolePaths = Array.isArray(membership.roles)
+    ? [...membership.roles]
+    : [];
+
+  if (membership.role) {
+    rolePaths.push(membership.role);
+  }
+
+  const matchedRank = Object.entries(RANKS).find(
+    ([rankName, roleId]) =>
+      rolePaths.some(
+        path =>
+          String(path).split("/").pop() === String(roleId)
+      )
+  );
+
+  const verifiedRole = interaction.guild.roles.cache.find(
+    role => role.name === "Verified"
+  );
+
+  if (!verifiedRole) {
+    return interaction.editReply(
+      "Discord Verified role was not found."
+    );
+  }
+
+  const member = await interaction.guild.members.fetch(
+    interaction.user.id
+  );
+
+  await member.roles.add(verifiedRole);
+
+  let rankMessage = "";
+
+  if (matchedRank) {
+    const rankName = getDiscordRankName(matchedRank[0]);
+
+    const rankRole = interaction.guild.roles.cache.find(
+      role => role.name === rankName
+    );
+
+    if (!rankRole) {
+      return interaction.editReply(
+        "Discord rank role not found: " + rankName
+      );
+    }
+
+    const managedNames = Object.keys(RANKS).map(
+      getDiscordRankName
+    );
+
+    const oldRoles = member.roles.cache.filter(
+      role =>
+        managedNames.includes(role.name) &&
+        role.id !== rankRole.id
+    );
+
+    if (oldRoles.size > 0) {
+      await member.roles.remove(oldRoles);
+    }
+
+    await member.roles.add(rankRole);
+    rankMessage = "\nRank: *" + rankName + "*";
+  }
+
+  return interaction.editReply(
+    "Verification successful!\n" +
+    "Roblox Username: **" + user.name + "**\n" +
+    "Discord Role: *Verified*" +
+    rankMessage
+  );
+}
+
+// CHANGE RANK
 async function changeMemberRank(interaction, action) {
   const username = interaction.options
     .getString("username")
@@ -170,7 +252,6 @@ async function changeMemberRank(interaction, action) {
     return interaction.editReply("Invalid target rank.");
   }
 
-  // Check target Discord rank role before changing Roblox
   const targetDiscordRoleName = getDiscordRankName(targetRank);
 
   const targetDiscordRole = interaction.guild.roles.cache.find(
@@ -183,16 +264,14 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
-  // Find Roblox account
   const user = await getRobloxUser(username);
 
   if (!user) {
     return interaction.editReply(
-      "Roblox account not found. Check the username."
+      "Roblox account not found."
     );
   }
 
-  // Check group membership
   const membership = await getGroupMember(user.id);
 
   if (!membership) {
@@ -201,16 +280,14 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
-  // Roblox membership resource uses users/{userId}
   if (!membership.user) {
     return interaction.editReply(
-      "Could not read the Roblox membership user ID."
+      "Could not read Roblox membership information."
     );
   }
 
   const membershipId = membership.user.split("/").pop();
 
-  // Read all current roles
   const currentRolePaths = Array.isArray(membership.roles)
     ? membership.roles
     : membership.role
@@ -229,27 +306,24 @@ async function changeMemberRank(interaction, action) {
       id !== String(targetRoleId)
   );
 
-  // Assign target rank first
   if (!currentRoleIds.includes(String(targetRoleId))) {
     await assignGroupRole(membershipId, targetRoleId);
   }
 
-  // Remove only the old ranks managed by this bot
   for (const oldRankId of oldRankIds) {
     await unassignGroupRole(membershipId, oldRankId);
   }
 
-  // Update Discord roles
   const discordMember = await interaction.guild.members.fetch(
     interaction.user.id
   );
 
-  const managedDiscordRoleNames = Object.keys(RANKS).map(
+  const managedNames = Object.keys(RANKS).map(
     getDiscordRankName
   );
 
   const oldDiscordRoles = discordMember.roles.cache.filter(
-    role => managedDiscordRoleNames.includes(role.name)
+    role => managedNames.includes(role.name)
   );
 
   if (oldDiscordRoles.size > 0) {
@@ -262,221 +336,51 @@ async function changeMemberRank(interaction, action) {
     "Rank update successful!\n\n" +
     "Roblox Username: **" + user.name + "**\n" +
     "New Rank: **" + targetDiscordRoleName + "**\n" +
-    "Action: **" + action.toUpperCase() + "**\n\n" +
-    "Roblox and Discord roles have been updated."
+    "Action: *" + action.toUpperCase() + "*"
   );
 }
 
-// Handle slash commands
+// INTERACTIONS
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // VERIFY
-  if (interaction.commandName === "verify") {
-    await interaction.deferReply({ ephemeral: true });
-
-    try {
-      const username = interaction.options
-        .getString("username")
-        .trim();
-
-      const code = interaction.options.getString("code");
-
-      // STEP 1: Generate verification code
-      if (!code) {
-        const user = await getRobloxUser(username);
-
-        if (!user) {
-          return interaction.editReply(
-            "Roblox account not found. Check your username."
-          );
-        }
-
-        const verificationCode = crypto
-          .randomInt(100000, 1000000)
-          .toString();
-
-        pendingVerifications.set(interaction.user.id, {
-          username: user.name,
-          userId: user.id,
-          code: verificationCode,
-          expiresAt: Date.now() + 10 * 60 * 1000
-        });
-
-        return interaction.editReply(
-          "Your verification code is: **" +
-          verificationCode +
-          "**\n\nPut this code in your Roblox profile description. " +
-          "Then run /verify again using your username and code. " +
-          "The code expires in 10 minutes."
-        );
-      }
-
-      // STEP 2: Check pending verification
-      const pending = pendingVerifications.get(
-        interaction.user.id
-      );
-
-      if (!pending || Date.now() > pending.expiresAt) {
-        pendingVerifications.delete(interaction.user.id);
-
-        return interaction.editReply(
-          "Your verification code expired or was not found. " +
-          "Run /verify again without a code to get a new one."
-        );
-      }
-
-      if (
-        pending.username.toLowerCase() !== username.toLowerCase() ||
-        pending.code !== code.trim()
-      ) {
-        return interaction.editReply(
-          "Incorrect username or verification code."
-        );
-      }
-
-      // STEP 3: Check Roblox profile description
-      const profile = await getRobloxProfile(pending.userId);
-
-      if (!String(profile.description || "").includes(pending.code)) {
-        return interaction.editReply(
-          "I cannot find your code in your Roblox profile description. " +
-          "Add it and try again."
-        );
-      }
-
-      // STEP 4: Check Roblox group membership
-      const membership = await getGroupMember(pending.userId);
-
-      if (!membership) {
-        return interaction.editReply(
-          "You are not a member of our Roblox group yet. " +
-          "Join the group first, then try again."
-        );
-      }
-
-      // STEP 5: Identify matching Roblox rank
-      const rolePaths = Array.isArray(membership.roles)
-        ? [...membership.roles]
-        : [];
-
-      if (membership.role) {
-        rolePaths.push(membership.role);
-      }
-
-      const matchedRank = Object.entries(RANKS).find(
-        ([rankName, roleId]) =>
-          rolePaths.some(
-            path =>
-              String(path).split("/").pop() === String(roleId)
-          )
-      );
-
-      // STEP 6: Find Discord roles
-      const verifiedRole = interaction.guild.roles.cache.find(
-        role => role.name === "Verified"
-      );
-
-      if (!verifiedRole) {
-        return interaction.editReply(
-          "Discord Verified role was not found."
-        );
-      }
-
-      let rankRole = null;
-
-      if (matchedRank) {
-        const rankName = getDiscordRankName(matchedRank[0]);
-
-        rankRole = interaction.guild.roles.cache.find(
-          role => role.name === rankName
-        );
-
-        if (!rankRole) {
-          return interaction.editReply(
-            "Discord rank role not found: " + rankName
-          );
-        }
-      }
-
-      // STEP 7: Give Discord roles
-      const member = await interaction.guild.members.fetch(
-        interaction.user.id
-      );
-
-      await member.roles.add(verifiedRole);
-
-      if (rankRole) {
-        const managedDiscordRoleNames = Object.keys(RANKS).map(
-          getDiscordRankName
-        );
-
-        const oldRankRoles = member.roles.cache.filter(
-          role =>
-            managedDiscordRoleNames.includes(role.name) &&
-            role.id !== rankRole.id
-        );
-
-        if (oldRankRoles.size > 0) {
-          await member.roles.remove(oldRankRoles);
-        }
-
-        await member.roles.add(rankRole);
-      }
-
-      pendingVerifications.delete(interaction.user.id);
-
-      return interaction.editReply(
-        "Verification successful!\n" +
-        "Roblox Username: **" + pending.username + "**\n" +
-        "Discord Role: *Verified*" +
-        (rankRole ? "\nRank: *" + rankRole.name + "*" : "")
-      );
-
-    } catch (error) {
-      console.error("VERIFY ERROR:", error);
-
-      return interaction.editReply(
-        "Verification failed. Please try again later."
-      );
-    }
-  }
-
-  // PROMOTE / DEMOTE
   if (
-    interaction.commandName === "promote" ||
-    interaction.commandName === "demote"
-  ) {
-    await interaction.deferReply({ ephemeral: true });
+    !["verify", "promote", "demote"].includes(
+      interaction.commandName
+    )
+  ) return;
 
-    try {
-      // Owner-only permission
-      const actor = await interaction.guild.members.fetch(
-        interaction.user.id
-      );
+  await interaction.deferReply({ ephemeral: true });
 
-      if (!actor.roles.cache.has(DISCORD_OWNER_ROLE_ID)) {
-        return interaction.editReply(
-          "You are not allowed to use this command. Owner only."
-        );
-      }
+  try {
+    if (interaction.commandName === "verify") {
+      return await verifyMember(interaction);
+    }
 
-      await changeMemberRank(
-        interaction,
-        interaction.commandName
-      );
+    const actor = await interaction.guild.members.fetch(
+      interaction.user.id
+    );
 
-    } catch (error) {
-      console.error(
-        interaction.commandName.toUpperCase() + " ERROR:",
-        error
-      );
-
+    if (!actor.roles.cache.has(DISCORD_OWNER_ROLE_ID)) {
       return interaction.editReply(
-        "Rank update failed. Check Railway logs for details. " +
-        "If Roblox was already updated, check the member's roles before retrying."
+        "You are not allowed to use this command. Owner only."
       );
     }
+
+    return await changeMemberRank(
+      interaction,
+      interaction.commandName
+    );
+
+  } catch (error) {
+    console.error(
+      interaction.commandName.toUpperCase() + " ERROR:",
+      error
+    );
+
+    return interaction.editReply(
+      "An error occurred. Please check Railway logs."
+    );
   }
 });
 
