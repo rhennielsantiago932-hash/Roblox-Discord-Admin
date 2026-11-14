@@ -1,0 +1,13 @@
+{
+  "name": "roblox-discord-ranking-bot",
+  "version": "1.0.0",
+  "description": "Roblox Group Ranking Bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.4.7"
+  }
+}
