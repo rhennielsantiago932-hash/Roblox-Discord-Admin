@@ -1,6 +1,6 @@
 const { ROBLOX_GROUP_ID } = require("./config");
 
-async function robloxRequest(path) {
+async function robloxRequest(path, options = {}) {
   const apiKey = process.env.ROBLOX_API_KEY;
 
   if (!apiKey) {
@@ -10,13 +10,23 @@ async function robloxRequest(path) {
   const response = await fetch(
     "https://apis.roblox.com/cloud/v2" + path,
     {
+      ...options,
       headers: {
-        "x-api-key": apiKey
+        "x-api-key": apiKey,
+        "Content-Type": "application/json",
+        ...options.headers
       }
     }
   );
 
-  const data = await response.json();
+  const text = await response.text();
+  let data = {};
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { message: text };
+  }
 
   if (!response.ok) {
     throw new Error(
@@ -75,8 +85,40 @@ async function getGroupMember(userId) {
   return data.groupMemberships?.[0] || null;
 }
 
+// Assign a Roblox group role
+async function assignGroupRole(userId, roleId) {
+  return robloxRequest(
+    "/groups/" + ROBLOX_GROUP_ID +
+    "/memberships/" + userId + ":assignRole",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        role: "groups/" + ROBLOX_GROUP_ID +
+          "/roles/" + roleId
+      })
+    }
+  );
+}
+
+// Remove a specific Roblox group role
+async function unassignGroupRole(userId, roleId) {
+  return robloxRequest(
+    "/groups/" + ROBLOX_GROUP_ID +
+    "/memberships/" + userId + ":unassignRole",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        role: "groups/" + ROBLOX_GROUP_ID +
+          "/roles/" + roleId
+      })
+    }
+  );
+}
+
 module.exports = {
   getRobloxUser,
   getRobloxProfile,
-  getGroupMember
+  getGroupMember,
+  assignGroupRole,
+  unassignGroupRole
 };
