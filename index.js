@@ -44,10 +44,10 @@ function getDiscordRankName(rankName) {
     .join(" ");
 }
 
-// VERIFY
+// VERIFY COMMAND
 const verifyCommand = new SlashCommandBuilder()
   .setName("verify")
-  .setDescription("Verify your Roblox username and group membership")
+  .setDescription("Check your Roblox group membership")
   .addStringOption(option =>
     option
       .setName("username")
@@ -55,42 +55,55 @@ const verifyCommand = new SlashCommandBuilder()
       .setRequired(true)
   );
 
-// PROMOTE
+// PROMOTE COMMAND
 const promoteCommand = new SlashCommandBuilder()
   .setName("promote")
   .setDescription("Promote a Roblox group member")
+  .addUserOption(option =>
+    option
+      .setName("member")
+      .setDescription("Discord member to promote")
+      .setRequired(true)
+  )
   .addStringOption(option =>
     option
       .setName("username")
-      .setDescription("Roblox username")
+      .setDescription("Roblox username of the member")
       .setRequired(true)
   )
   .addStringOption(option =>
     option
       .setName("rank")
-      .setDescription("Choose target rank")
+      .setDescription("Choose the target rank")
       .setRequired(true)
       .addChoices(...rankChoices)
   );
 
-// DEMOTE
+// DEMOTE COMMAND
 const demoteCommand = new SlashCommandBuilder()
   .setName("demote")
   .setDescription("Demote a Roblox group member")
+  .addUserOption(option =>
+    option
+      .setName("member")
+      .setDescription("Discord member to demote")
+      .setRequired(true)
+  )
   .addStringOption(option =>
     option
       .setName("username")
-      .setDescription("Roblox username")
+      .setDescription("Roblox username of the member")
       .setRequired(true)
   )
   .addStringOption(option =>
     option
       .setName("rank")
-      .setDescription("Choose target rank")
+      .setDescription("Choose the target rank")
       .setRequired(true)
       .addChoices(...rankChoices)
   );
 
+// REGISTER COMMANDS
 client.once(Events.ClientReady, async bot => {
   console.log("Ranking Bot Online: " + bot.user.tag);
 
@@ -116,7 +129,7 @@ client.once(Events.ClientReady, async bot => {
     console.log("SLASH COMMANDS REGISTERED!");
   } catch (error) {
     console.error("COMMAND REGISTRATION FAILED!");
-    console.error(error.message);
+    console.error(error);
   }
 
   try {
@@ -154,7 +167,7 @@ async function verifyMember(interaction) {
 
   if (!user) {
     return interaction.editReply(
-      "Roblox account not found. Check your username."
+      "Roblox account not found. Check the username."
     );
   }
 
@@ -239,8 +252,9 @@ async function verifyMember(interaction) {
   );
 }
 
-// CHANGE RANK
+// CHANGE MEMBER RANK
 async function changeMemberRank(interaction, action) {
+  const targetDiscordUser = interaction.options.getUser("member");
   const username = interaction.options
     .getString("username")
     .trim();
@@ -252,6 +266,23 @@ async function changeMemberRank(interaction, action) {
     return interaction.editReply("Invalid target rank.");
   }
 
+  // Fetch the selected Discord member
+  const targetMember = await interaction.guild.members.fetch(
+    targetDiscordUser.id
+  );
+
+  // Require Verified role
+  const verifiedRole = interaction.guild.roles.cache.find(
+    role => role.name === "Verified"
+  );
+
+  if (!verifiedRole || !targetMember.roles.cache.has(verifiedRole.id)) {
+    return interaction.editReply(
+      "The selected Discord member must have the Verified role first."
+    );
+  }
+
+  // Find target Discord rank role
   const targetDiscordRoleName = getDiscordRankName(targetRank);
 
   const targetDiscordRole = interaction.guild.roles.cache.find(
@@ -264,6 +295,7 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
+  // Find Roblox account
   const user = await getRobloxUser(username);
 
   if (!user) {
@@ -272,6 +304,7 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
+  // Check Roblox group membership
   const membership = await getGroupMember(user.id);
 
   if (!membership) {
@@ -288,6 +321,7 @@ async function changeMemberRank(interaction, action) {
 
   const membershipId = membership.user.split("/").pop();
 
+  // Read current Roblox roles
   const currentRolePaths = Array.isArray(membership.roles)
     ? membership.roles
     : membership.role
@@ -306,41 +340,44 @@ async function changeMemberRank(interaction, action) {
       id !== String(targetRoleId)
   );
 
+  // Assign target Roblox role
   if (!currentRoleIds.includes(String(targetRoleId))) {
     await assignGroupRole(membershipId, targetRoleId);
   }
 
+  // Remove only the old ranks managed by this bot
   for (const oldRankId of oldRankIds) {
     await unassignGroupRole(membershipId, oldRankId);
   }
 
-  const discordMember = await interaction.guild.members.fetch(
-    interaction.user.id
-  );
-
-  const managedNames = Object.keys(RANKS).map(
+  // Remove old Discord rank roles from TARGET MEMBER
+  const managedDiscordNames = Object.keys(RANKS).map(
     getDiscordRankName
   );
 
-  const oldDiscordRoles = discordMember.roles.cache.filter(
-    role => managedNames.includes(role.name)
+  const oldDiscordRoles = targetMember.roles.cache.filter(
+    role =>
+      managedDiscordNames.includes(role.name) &&
+      role.id !== targetDiscordRole.id
   );
 
   if (oldDiscordRoles.size > 0) {
-    await discordMember.roles.remove(oldDiscordRoles);
+    await targetMember.roles.remove(oldDiscordRoles);
   }
 
-  await discordMember.roles.add(targetDiscordRole);
+  // Give new Discord rank to TARGET MEMBER
+  await targetMember.roles.add(targetDiscordRole);
 
   return interaction.editReply(
     "Rank update successful!\n\n" +
+    "Discord Member: **" + targetDiscordUser.tag + "**\n" +
     "Roblox Username: **" + user.name + "**\n" +
     "New Rank: **" + targetDiscordRoleName + "**\n" +
     "Action: *" + action.toUpperCase() + "*"
   );
 }
 
-// INTERACTIONS
+// INTERACTION HANDLER
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -348,7 +385,9 @@ client.on(Events.InteractionCreate, async interaction => {
     !["verify", "promote", "demote"].includes(
       interaction.commandName
     )
-  ) return;
+  ) {
+    return;
+  }
 
   await interaction.deferReply({ ephemeral: true });
 
@@ -357,6 +396,7 @@ client.on(Events.InteractionCreate, async interaction => {
       return await verifyMember(interaction);
     }
 
+    // OWNER ONLY
     const actor = await interaction.guild.members.fetch(
       interaction.user.id
     );
@@ -379,7 +419,7 @@ client.on(Events.InteractionCreate, async interaction => {
     );
 
     return interaction.editReply(
-      "An error occurred. Please check Railway logs."
+      "Rank operation failed. Please check Railway logs."
     );
   }
 });
