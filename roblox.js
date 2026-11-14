@@ -2,7 +2,7 @@ const GROUP_ID = require("./config").ROBLOX_GROUP_ID;
 
 async function robloxRequest(path, options = {}) {
   const response = await fetch(
-    https://apis.roblox.com/cloud/v2${path},
+    `https://apis.roblox.com/cloud/v2${path}`,
     {
       ...options,
       headers: {
@@ -43,7 +43,7 @@ async function getRobloxUser(username) {
 
 async function getGroupMember(userId) {
   const data = await robloxRequest(
-    /groups/${GROUP_ID}/memberships?maxPageSize=100&filter=userId%20%3D%3D%20${userId}
+    `/groups/${GROUP_ID}/memberships?maxPageSize=100&filter=userId%20%3D%3D%20${userId}`
   );
 
   return data.groupMemberships?.[0] || null;
@@ -51,7 +51,7 @@ async function getGroupMember(userId) {
 
 async function assignRole(membershipId, roleId) {
   return robloxRequest(
-    /groups/${GROUP_ID}/memberships/${membershipId}:assignRole,
+    `/groups/${GROUP_ID}/memberships/${membershipId}:assignRole`,
     {
       method: "POST",
       body: JSON.stringify({
