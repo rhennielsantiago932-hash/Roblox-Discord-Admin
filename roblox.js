@@ -37,6 +37,7 @@ async function robloxRequest(path, options = {}) {
   return data;
 }
 
+// Find Roblox user by username
 async function getRobloxUser(username) {
   const response = await fetch(
     "https://users.roblox.com/v1/usernames/users",
@@ -60,6 +61,7 @@ async function getRobloxUser(username) {
   return data.data?.[0] || null;
 }
 
+// Get Roblox profile
 async function getRobloxProfile(userId) {
   const response = await fetch(
     "https://users.roblox.com/v1/users/" + userId
@@ -72,6 +74,7 @@ async function getRobloxProfile(userId) {
   return response.json();
 }
 
+// Find group membership
 async function getGroupMember(userId) {
   const filter = encodeURIComponent(
     "user == 'users/" + userId + "'"
@@ -85,11 +88,23 @@ async function getGroupMember(userId) {
   return data.groupMemberships?.[0] || null;
 }
 
-// Assign a Roblox group role
-async function assignGroupRole(userId, roleId) {
+// Get membership ID from membership resource name
+function getMembershipId(membership) {
+  if (!membership?.path && !membership?.name) {
+    throw new Error("Roblox membership ID not found!");
+  }
+
+  const resourceName = membership.path || membership.name;
+
+  return resourceName.split("/").pop();
+}
+
+// Assign a role to a group member
+async function assignGroupRole(membershipId, roleId) {
   return robloxRequest(
     "/groups/" + ROBLOX_GROUP_ID +
-    "/memberships/" + userId + ":assignRole",
+    "/memberships/" + membershipId +
+    ":assignRole",
     {
       method: "POST",
       body: JSON.stringify({
@@ -100,11 +115,12 @@ async function assignGroupRole(userId, roleId) {
   );
 }
 
-// Remove a specific Roblox group role
-async function unassignGroupRole(userId, roleId) {
+// Unassign a role from a group member
+async function unassignGroupRole(membershipId, roleId) {
   return robloxRequest(
     "/groups/" + ROBLOX_GROUP_ID +
-    "/memberships/" + userId + ":unassignRole",
+    "/memberships/" + membershipId +
+    ":unassignRole",
     {
       method: "POST",
       body: JSON.stringify({
@@ -119,6 +135,7 @@ module.exports = {
   getRobloxUser,
   getRobloxProfile,
   getGroupMember,
+  getMembershipId,
   assignGroupRole,
   unassignGroupRole
 };
