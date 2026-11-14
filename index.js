@@ -49,3 +49,5 @@ client.once(Events.ClientReady, async (bot) => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
+// Roblox connection test
