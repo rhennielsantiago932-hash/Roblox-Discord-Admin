@@ -1,22 +1,31 @@
-const GROUP_ID = require("./config").ROBLOX_GROUP_ID;
+const { ROBLOX_GROUP_ID } = require("./config");
 
 async function robloxRequest(path, options = {}) {
+  const apiKey = process.env.ROBLOX_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("ROBLOX_API_KEY is missing!");
+  }
+
   const response = await fetch(
-    `https://apis.roblox.com/cloud/v2${path}`,
+    https://apis.roblox.com/cloud/v2${path},
     {
       ...options,
       headers: {
-        "x-api-key": process.env.ROBLOX_API_KEY,
+        "x-api-key": apiKey,
         "Content-Type": "application/json",
         ...options.headers
       }
     }
   );
 
-  const data = await response.json();
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
 
   if (!response.ok) {
-    throw new Error(data.message || "Roblox API error");
+    throw new Error(
+      data.message || Roblox API Error: ${response.status}
+    );
   }
 
   return data;
@@ -27,7 +36,9 @@ async function getRobloxUser(username) {
     "https://users.roblox.com/v1/usernames/users",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({
         usernames: [username],
         excludeBannedUsers: false
@@ -35,15 +46,22 @@ async function getRobloxUser(username) {
     }
   );
 
-  if (!response.ok) throw new Error("Username lookup failed");
+  if (!response.ok) {
+    throw new Error("Roblox username lookup failed!");
+  }
 
   const data = await response.json();
-  return data.data[0] || null;
+
+  return data.data?.[0] || null;
 }
 
 async function getGroupMember(userId) {
+  const filter = encodeURIComponent(
+    user == 'users/${userId}'
+  );
+
   const data = await robloxRequest(
-    `/groups/${GROUP_ID}/memberships?maxPageSize=100&filter=userId%20%3D%3D%20${userId}`
+    /groups/${ROBLOX_GROUP_ID}/memberships?maxPageSize=100&filter=${filter}
   );
 
   return data.groupMemberships?.[0] || null;
@@ -51,7 +69,7 @@ async function getGroupMember(userId) {
 
 async function assignRole(membershipId, roleId) {
   return robloxRequest(
-    `/groups/${GROUP_ID}/memberships/${membershipId}:assignRole`,
+    /groups/${ROBLOX_GROUP_ID}/memberships/${membershipId}:assignRole,
     {
       method: "POST",
       body: JSON.stringify({
