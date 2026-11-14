@@ -1,4 +1,4 @@
-const GROUP_ID = process.env.ROBLOX_GROUP_ID;
+const GROUP_ID = require("./config").ROBLOX_GROUP_ID;
 
 async function getRobloxUser(username) {
   const response = await fetch(
