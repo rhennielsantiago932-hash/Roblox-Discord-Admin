@@ -13,7 +13,7 @@ const client = new Client({
 });
 
 client.once(Events.ClientReady, (bot) => {
-  console.log(Ranking Bot Online: ${bot.user.tag});
+  console.log(`Ranking Bot Online: ${bot.user.tag}`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
