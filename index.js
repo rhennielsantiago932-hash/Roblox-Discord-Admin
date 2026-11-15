@@ -106,12 +106,7 @@ const promoteCommand = new SlashCommandBuilder()
       .setDescription("Discord member to promote")
       .setRequired(true)
   )
-  .addStringOption(option =>
-    option
-      .setName("username")
-      .setDescription("Roblox username of the member")
-      .setRequired(true)
-  )
+  
   .addStringOption(option =>
     option
       .setName("rank")
@@ -130,12 +125,7 @@ const demoteCommand = new SlashCommandBuilder()
       .setDescription("Discord member to demote")
       .setRequired(true)
   )
-  .addStringOption(option =>
-    option
-      .setName("username")
-      .setDescription("Roblox username of the member")
-      .setRequired(true)
-  )
+  
   .addStringOption(option =>
     option
       .setName("rank")
@@ -303,10 +293,7 @@ const membership = await getGroupMember(user.id);
 // CHANGE MEMBER RANK
 async function changeMemberRank(interaction, action) {
   const targetDiscordUser = interaction.options.getUser("member");
-  const username = interaction.options
-    .getString("username")
-    .trim();
-
+  
   const targetRank = interaction.options.getString("rank");
   const targetRoleId = RANKS[targetRank];
 
@@ -340,13 +327,23 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
-  const user = await getRobloxUser(username);
+  const linkedAccount = await pool.query(
+  `SELECT roblox_id, roblox_username
+   FROM account_links
+   WHERE discord_id = $1`,
+  [targetDiscordUser.id]
+);
 
-  if (!user) {
-    return interaction.editReply(
-      "Roblox account not found."
-    );
-  }
+if (linkedAccount.rowCount === 0) {
+  return interaction.editReply(
+    "This Discord member has not linked a Roblox account yet."
+  );
+}
+
+const user = {
+  id: linkedAccount.rows[0].roblox_id,
+  name: linkedAccount.rows[0].roblox_username
+};
 
   const membership = await getGroupMember(user.id);
 
@@ -356,39 +353,27 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
-  if (!membership.user) {
-    return interaction.editReply(
-      "Could not read Roblox membership information."
-    );
-  }
+ if (!membership.path && !membership.name) {
+  return interaction.editReply(
+    "Could not read Roblox membership information."
+  );
+}
 
-  const membershipId = membership.user.split("/").pop();
+  const membershipId = getMembershipId(membership);
 
   const currentRolePaths = Array.isArray(membership.roles)
-    ? membership.roles
-    : membership.role
-      ? [membership.role]
-      : [];
+  ? membership.roles
+  : membership.role
+    ? [membership.role]
+    : [];
 
-  const currentRoleIds = currentRolePaths.map(
-    path => String(path).split("/").pop()
-  );
+const currentRoleIds = currentRolePaths.map(
+  path => String(path).split("/").pop()
+);
 
-  const managedRankIds = Object.values(RANKS).map(String);
-
-  const oldRankIds = managedRankIds.filter(
-    id =>
-      currentRoleIds.includes(id) &&
-      id !== String(targetRoleId)
-  );
-
-  if (!currentRoleIds.includes(String(targetRoleId))) {
-    await assignGroupRole(membershipId, targetRoleId);
-  }
-
-  for (const oldRankId of oldRankIds) {
-    await unassignGroupRole(membershipId, oldRankId);
-  }
+if (!currentRoleIds.includes(String(targetRoleId))) {
+  await assignGroupRole(membershipId, targetRoleId);
+}
 
   const managedDiscordNames = Object.keys(RANKS).map(
     getDiscordRankName
