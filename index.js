@@ -1,5 +1,7 @@
 require("dotenv").config();
-const http = require("node:http")
+
+const http = require("node:http");
+const crypto = require("node:crypto");
 
 const {
   Client,
@@ -242,13 +244,13 @@ async function verifyMember(interaction) {
     }
 
     await member.roles.add(rankRole);
-    rankMessage = "\nRank: *" + rankName + "*";
+    rankMessage = "\nRank: " + rankName + "";
   }
 
   return interaction.editReply(
     "Verification successful!\n" +
     "Roblox Username: **" + user.name + "**\n" +
-    "Discord Role: *Verified*" +
+    "Discord Role: Verified" +
     rankMessage
   );
 }
@@ -267,12 +269,10 @@ async function changeMemberRank(interaction, action) {
     return interaction.editReply("Invalid target rank.");
   }
 
-  // Fetch the selected Discord member
   const targetMember = await interaction.guild.members.fetch(
     targetDiscordUser.id
   );
 
-  // Require Verified role
   const verifiedRole = interaction.guild.roles.cache.find(
     role => role.name === "Verified"
   );
@@ -283,7 +283,6 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
-  // Find target Discord rank role
   const targetDiscordRoleName = getDiscordRankName(targetRank);
 
   const targetDiscordRole = interaction.guild.roles.cache.find(
@@ -296,7 +295,6 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
-  // Find Roblox account
   const user = await getRobloxUser(username);
 
   if (!user) {
@@ -305,7 +303,6 @@ async function changeMemberRank(interaction, action) {
     );
   }
 
-  // Check Roblox group membership
   const membership = await getGroupMember(user.id);
 
   if (!membership) {
@@ -322,7 +319,6 @@ async function changeMemberRank(interaction, action) {
 
   const membershipId = membership.user.split("/").pop();
 
-  // Read current Roblox roles
   const currentRolePaths = Array.isArray(membership.roles)
     ? membership.roles
     : membership.role
@@ -341,17 +337,14 @@ async function changeMemberRank(interaction, action) {
       id !== String(targetRoleId)
   );
 
-  // Assign target Roblox role
   if (!currentRoleIds.includes(String(targetRoleId))) {
     await assignGroupRole(membershipId, targetRoleId);
   }
 
-  // Remove only the old ranks managed by this bot
   for (const oldRankId of oldRankIds) {
     await unassignGroupRole(membershipId, oldRankId);
   }
 
-  // Remove old Discord rank roles from TARGET MEMBER
   const managedDiscordNames = Object.keys(RANKS).map(
     getDiscordRankName
   );
@@ -366,7 +359,6 @@ async function changeMemberRank(interaction, action) {
     await targetMember.roles.remove(oldDiscordRoles);
   }
 
-  // Give new Discord rank to TARGET MEMBER
   await targetMember.roles.add(targetDiscordRole);
 
   return interaction.editReply(
@@ -374,7 +366,7 @@ async function changeMemberRank(interaction, action) {
     "Discord Member: **" + targetDiscordUser.tag + "**\n" +
     "Roblox Username: **" + user.name + "**\n" +
     "New Rank: **" + targetDiscordRoleName + "**\n" +
-    "Action: *" + action.toUpperCase() + "*"
+    "Action: " + action.toUpperCase() + ""
   );
 }
 
@@ -397,7 +389,6 @@ client.on(Events.InteractionCreate, async interaction => {
       return await verifyMember(interaction);
     }
 
-    // OWNER ONLY
     const actor = await interaction.guild.members.fetch(
       interaction.user.id
     );
@@ -425,20 +416,55 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
-const server = http.createServer((req, res) => {
-  if (req.method === "GET" && req.url === "/") {
-    res.writeHead(200, {
-      "Content-Type": "application/json"
-    });
+// SECURE GAME CONNECTION
+function checkGameSecret(received, expected) {
+  if (typeof received !== "string" || !expected) {
+    return false;
+  }
 
+  const a = Buffer.from(received);
+  const b = Buffer.from(expected);
+
+  return a.length === b.length &&
+    crypto.timingSafeEqual(a, b);
+}
+
+// HTTP SERVER
+const server = http.createServer((req, res) => {
+  res.setHeader("Content-Type", "application/json");
+
+  if (req.method === "GET" && req.url === "/") {
+    res.writeHead(200);
     return res.end(JSON.stringify({
       status: "online",
       service: "Roblox Discord Ranking Bot"
     }));
   }
 
+  if (req.method === "GET" && req.url === "/game-test") {
+    const received = req.headers["x-game-secret"];
+
+    if (!checkGameSecret(
+      received,
+      process.env.GAME_API_SECRET
+    )) {
+      res.writeHead(401);
+      return res.end(JSON.stringify({
+        error: "Unauthorized"
+      }));
+    }
+
+    res.writeHead(200);
+    return res.end(JSON.stringify({
+      authenticated: true,
+      message: "Roblox connection successful!"
+    }));
+  }
+
   res.writeHead(404);
-  res.end("Not Found");
+  res.end(JSON.stringify({
+    error: "Not Found"
+  }));
 });
 
 server.listen(process.env.PORT || 3000, "0.0.0.0", () => {
