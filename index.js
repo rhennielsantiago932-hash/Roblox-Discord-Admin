@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { initializeDatabase } = require("./database");
+const { initializeDatabase, pool } = require("./database");
 
 const {
   Client,
