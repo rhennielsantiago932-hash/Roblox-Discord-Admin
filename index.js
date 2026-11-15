@@ -18,6 +18,8 @@ const {
   DISCORD_GUILD_ID,
   DISCORD_CLIENT_ID,
   DISCORD_OWNER_ROLE_ID,
+  ROBLOX_OAUTH_CLIENT_ID,
+  ROBLOX_OAUTH_REDIRECT_URI,
   RANKS
 } = require("./config");
 
@@ -48,6 +50,41 @@ function getDiscordRankName(rankName) {
     .join(" ");
 }
 
+async function createRobloxLink(discordId) {
+  const state = crypto.randomBytes(32).toString("hex");
+
+  const codeVerifier = crypto.randomBytes(32).toString("base64url");
+
+  const codeChallenge = crypto
+    .createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
+
+  await pool.query(
+    `DELETE FROM oauth_states
+     WHERE created_at < NOW() - INTERVAL '10 minutes'`
+  );
+
+  await pool.query(
+    `INSERT INTO oauth_states
+     (state, discord_id, code_verifier)
+     VALUES ($1, $2, $3)`,
+    [state, discordId, codeVerifier]
+  );
+
+  const params = new URLSearchParams({
+    client_id: ROBLOX_OAUTH_CLIENT_ID,
+    redirect_uri: ROBLOX_OAUTH_REDIRECT_URI,
+    scope: "openid profile",
+    response_type: "code",
+    state: state,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256"
+  });
+
+  return "https://apis.roblox.com/oauth/v1/authorize?" + params.toString();
+}
+
 // VERIFY COMMAND
 const verifyCommand = new SlashCommandBuilder()
   .setName("verify")
@@ -58,6 +95,11 @@ const verifyCommand = new SlashCommandBuilder()
       .setDescription("Your Roblox username")
       .setRequired(true)
   );
+
+// LINK ROBLOX COMMAND
+const linkCommand = new SlashCommandBuilder()
+  .setName("link")
+  .setDescription("Connect your Roblox account to Discord");
 
 // PROMOTE COMMAND
 const promoteCommand = new SlashCommandBuilder()
@@ -123,10 +165,11 @@ client.once(Events.ClientReady, async bot => {
       ),
       {
         body: [
-          verifyCommand.toJSON(),
-          promoteCommand.toJSON(),
-          demoteCommand.toJSON()
-        ]
+  verifyCommand.toJSON(),
+  linkCommand.toJSON(),
+  promoteCommand.toJSON(),
+  demoteCommand.toJSON()
+]
       }
     );
 
@@ -376,7 +419,7 @@ client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   if (
-    !["verify", "promote", "demote"].includes(
+    !["verify", "link", "promote", "demote"].includes(
       interaction.commandName
     )
   ) {
@@ -389,6 +432,14 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.commandName === "verify") {
       return await verifyMember(interaction);
     }
+
+    if (interaction.commandName === "link") {
+  const link = await createRobloxLink(interaction.user.id);
+
+  return interaction.editReply(
+    "Click here to connect your Roblox account:\n" + link
+  );
+}
 
     const actor = await interaction.guild.members.fetch(
       interaction.user.id
@@ -430,9 +481,133 @@ function checkGameSecret(received, expected) {
     crypto.timingSafeEqual(a, b);
 }
 
+// ROBLOX OAUTH CALLBACK
+async function handleOAuthCallback(req, res) {
+  const url = new URL(
+    req.url,
+    "https://zesty-playfulness-production.up.railway.app"
+  );
+
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const oauthError = url.searchParams.get("error");
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+
+  if (oauthError || !code || !state) {
+    res.writeHead(400);
+    return res.end("<h2>Roblox linking failed.</h2><p>Please try again using Discord /link.</p>");
+  }
+
+  const result = await pool.query(
+    `DELETE FROM oauth_states
+     WHERE state = $1
+     AND created_at > NOW() - INTERVAL '10 minutes'
+     RETURNING discord_id, code_verifier`,
+    [state]
+  );
+
+  if (result.rowCount === 0) {
+    res.writeHead(400);
+    return res.end("<h2>Invalid or expired link request.</h2><p>Please try again using Discord /link.</p>");
+  }
+
+  const { discord_id, code_verifier } = result.rows[0];
+
+  const tokenResponse = await fetch(
+    "https://apis.roblox.com/oauth/v1/token",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code: code,
+        code_verifier: code_verifier,
+        client_id: ROBLOX_OAUTH_CLIENT_ID,
+        client_secret: process.env.ROBLOX_OAUTH_CLIENT_SECRET
+      })
+    }
+  );
+
+  if (!tokenResponse.ok) {
+    throw new Error("Roblox token exchange failed: " + tokenResponse.status);
+  }
+
+  const tokenData = await tokenResponse.json();
+
+  const userResponse = await fetch(
+    "https://apis.roblox.com/oauth/v1/userinfo",
+    {
+      headers: {
+        Authorization: "Bearer " + tokenData.access_token
+      }
+    }
+  );
+
+  if (!userResponse.ok) {
+    throw new Error("Roblox user information request failed.");
+  }
+
+  const robloxUser = await userResponse.json();
+
+  if (!robloxUser.sub || !robloxUser.preferred_username) {
+    throw new Error("Roblox account information is incomplete.");
+  }
+
+  const existingLink = await pool.query(
+    `SELECT discord_id
+     FROM account_links
+     WHERE roblox_id = $1
+     AND discord_id <> $2`,
+    [String(robloxUser.sub), discord_id]
+  );
+
+  if (existingLink.rowCount > 0) {
+    res.writeHead(409);
+    return res.end("<h2>This Roblox account is already linked to another Discord account.</h2>");
+  }
+
+  await pool.query(
+    `INSERT INTO account_links
+     (discord_id, roblox_id, roblox_username)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (discord_id)
+     DO UPDATE SET
+       roblox_id = EXCLUDED.roblox_id,
+       roblox_username = EXCLUDED.roblox_username,
+       linked_at = NOW()`,
+    [
+      discord_id,
+      String(robloxUser.sub),
+      robloxUser.preferred_username
+    ]
+  );
+
+  res.writeHead(200);
+  return res.end(
+    "<h2>Roblox account linked successfully!</h2>" +
+    "<p>You can now return to Discord.</p>"
+  );
+}
+
 // HTTP SERVER
 const server = http.createServer((req, res) => {
   res.setHeader("Content-Type", "application/json");
+
+  if (req.method === "GET" && req.url.startsWith("/oauth/callback")) {
+    handleOAuthCallback(req, res).catch(error => {
+      console.error("OAUTH CALLBACK ERROR:", error);
+
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end("<h2>Roblox linking failed.</h2><p>Please try again later.</p>");
+      }
+    });
+
+    return;
+  }
 
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200);
