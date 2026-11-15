@@ -675,6 +675,29 @@ function readJsonBody(req) {
 
 // HTTP SERVER
 const server = http.createServer(async (req, res) => {
+  
+  // GAME CONNECTION TEST
+if (req.url === "/game-test" && req.method === "GET") {
+  if (!isValidGameRequest(req)) {
+    res.writeHead(401, {
+      "Content-Type": "application/json"
+    });
+
+    return res.end(JSON.stringify({
+      authenticated: false,
+      error: "Unauthorized"
+    }));
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "application/json"
+  });
+
+  return res.end(JSON.stringify({
+    authenticated: true,
+    message: "Roblox connection successful!"
+  }));
+}
   res.setHeader("Content-Type", "application/json");
 
   if (req.method === "GET" && req.url.startsWith("/oauth/callback")) {
