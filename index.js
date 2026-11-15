@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const http = require("node:http");
 const crypto = require("node:crypto");
+const { initializeDatabase } = reguire("./database");
 
 const {
   Client,
@@ -471,4 +472,10 @@ server.listen(process.env.PORT || 3000, "0.0.0.0", () => {
   console.log("GAME API SERVER ONLINE!");
 });
 
-client.login(process.env.DISCORD_TOKEN);
+initializeDatabase()
+  .then(() => {
+    return client.login(process.env.DISCORD_TOKEN);
+  })
+  .catch(error => {
+    console.error("DATABASE CONNECTION FAILED:", error);
+  });
