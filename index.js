@@ -88,13 +88,7 @@ async function createRobloxLink(discordId) {
 // VERIFY COMMAND
 const verifyCommand = new SlashCommandBuilder()
   .setName("verify")
-  .setDescription("Check your Roblox group membership")
-  .addStringOption(option =>
-    option
-      .setName("username")
-      .setDescription("Your Roblox username")
-      .setRequired(true)
-  );
+  .setDescription("Verify your linked Roblox group membership");
 
 // LINK ROBLOX COMMAND
 const linkCommand = new SlashCommandBuilder()
@@ -206,20 +200,26 @@ client.once(Events.ClientReady, async bot => {
 
 // VERIFY MEMBER
 async function verifyMember(interaction) {
-  const username = interaction.options
-    .getString("username")
-    .trim();
+  const linkedAccount = await pool.query(
+  `SELECT roblox_id, roblox_username
+   FROM account_links
+   WHERE discord_id = $1`,
+  [interaction.user.id]
+);
 
-  const user = await getRobloxUser(username);
+if (linkedAccount.rowCount === 0) {
+  return interaction.editReply(
+    "You don't have a linked Roblox account yet. Please use /link first."
+  );
+}
 
-  if (!user) {
-    return interaction.editReply(
-      "Roblox account not found. Check the username."
-    );
-  }
+const user = {
+  id: linkedAccount.rows[0].roblox_id,
+  name: linkedAccount.rows[0].roblox_username
+};
 
-  const membership = await getGroupMember(user.id);
-
+const membership = await getGroupMember(user.id);
+  
   if (!membership) {
     return interaction.editReply(
       "You are not a member of our Roblox group. Join first!"
