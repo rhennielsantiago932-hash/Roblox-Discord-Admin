@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const http = require("node:http");
 const crypto = require("node:crypto");
+
 const { initializeDatabase, pool } = require("./database");
 
 const {
@@ -24,17 +25,18 @@ const {
 } = require("./config");
 
 const {
-  getRobloxUser,
   getGroupMember,
   getMembershipId,
   assignGroupRole,
   unassignGroupRole
 } = require("./roblox");
 
+// DISCORD CLIENT
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
+// RANK CHOICES
 const rankChoices = [
   { name: "Owner", value: "OWNER" },
   { name: "Developer", value: "DEVELOPER" },
@@ -43,6 +45,7 @@ const rankChoices = [
   { name: "Vendor", value: "VENDOR" }
 ];
 
+// HIGHEST TO LOWEST
 const RANK_ORDER = [
   "OWNER",
   "DEVELOPER",
@@ -50,7 +53,8 @@ const RANK_ORDER = [
   "STAFF_TEAM",
   "VENDOR"
 ];
-  
+
+// CONVERT RANK NAME
 function getDiscordRankName(rankName) {
   return rankName
     .toLowerCase()
@@ -59,6 +63,7 @@ function getDiscordRankName(rankName) {
     .join(" ");
 }
 
+// CREATE ROBLOX LINK
 async function createRobloxLink(discordId) {
   const state = crypto.randomBytes(32).toString("hex");
 
@@ -86,12 +91,13 @@ async function createRobloxLink(discordId) {
     redirect_uri: ROBLOX_OAUTH_REDIRECT_URI,
     scope: "openid profile",
     response_type: "code",
-    state: state,
+    state,
     code_challenge: codeChallenge,
     code_challenge_method: "S256"
   });
 
-  return "https://apis.roblox.com/oauth/v1/authorize?" + params.toString();
+  return "https://apis.roblox.com/oauth/v1/authorize?" +
+    params.toString();
 }
 
 // VERIFY COMMAND
@@ -99,7 +105,7 @@ const verifyCommand = new SlashCommandBuilder()
   .setName("verify")
   .setDescription("Verify your linked Roblox group membership");
 
-// LINK ROBLOX COMMAND
+// LINK COMMAND
 const linkCommand = new SlashCommandBuilder()
   .setName("link")
   .setDescription("Connect your Roblox account to Discord");
@@ -114,7 +120,6 @@ const promoteCommand = new SlashCommandBuilder()
       .setDescription("Discord member to promote")
       .setRequired(true)
   )
-  
   .addStringOption(option =>
     option
       .setName("rank")
@@ -133,7 +138,6 @@ const demoteCommand = new SlashCommandBuilder()
       .setDescription("Discord member to demote")
       .setRequired(true)
   )
-  
   .addStringOption(option =>
     option
       .setName("rank")
@@ -142,7 +146,7 @@ const demoteCommand = new SlashCommandBuilder()
       .addChoices(...rankChoices)
   );
 
-// REGISTER COMMANDS
+// DISCORD READY
 client.once(Events.ClientReady, async bot => {
   console.log("Ranking Bot Online: " + bot.user.tag);
 
@@ -158,11 +162,11 @@ client.once(Events.ClientReady, async bot => {
       ),
       {
         body: [
-  verifyCommand.toJSON(),
-  linkCommand.toJSON(),
-  promoteCommand.toJSON(),
-  demoteCommand.toJSON()
-]
+          verifyCommand.toJSON(),
+          linkCommand.toJSON(),
+          promoteCommand.toJSON(),
+          demoteCommand.toJSON()
+        ]
       }
     );
 
@@ -172,6 +176,7 @@ client.once(Events.ClientReady, async bot => {
     console.error(error);
   }
 
+  // ROBLOX CONNECTION CHECK
   try {
     const response = await fetch(
       "https://apis.roblox.com/cloud/v2/groups/" +
@@ -200,25 +205,25 @@ client.once(Events.ClientReady, async bot => {
 // VERIFY MEMBER
 async function verifyMember(interaction) {
   const linkedAccount = await pool.query(
-  `SELECT roblox_id, roblox_username
-   FROM account_links
-   WHERE discord_id = $1`,
-  [interaction.user.id]
-);
-
-if (linkedAccount.rowCount === 0) {
-  return interaction.editReply(
-    "You don't have a linked Roblox account yet. Please use /link first."
+    `SELECT roblox_id, roblox_username
+     FROM account_links
+     WHERE discord_id = $1`,
+    [interaction.user.id]
   );
-}
 
-const user = {
-  id: linkedAccount.rows[0].roblox_id,
-  name: linkedAccount.rows[0].roblox_username
-};
+  if (linkedAccount.rowCount === 0) {
+    return interaction.editReply(
+      "You don't have a linked Roblox account yet. Please use /link first."
+    );
+  }
 
-const membership = await getGroupMember(user.id);
-  
+  const user = {
+    id: linkedAccount.rows[0].roblox_id,
+    name: linkedAccount.rows[0].roblox_username
+  };
+
+  const membership = await getGroupMember(user.id);
+
   if (!membership) {
     return interaction.editReply(
       "You are not a member of our Roblox group. Join first!"
@@ -287,7 +292,7 @@ const membership = await getGroupMember(user.id);
     }
 
     await member.roles.add(rankRole);
-    rankMessage = "\nRank: " + rankName + "";
+    rankMessage = "\nRank: " + rankName;
   }
 
   return interaction.editReply(
@@ -314,18 +319,28 @@ async function applyMemberRank(guild, robloxUserId, targetRank, action) {
   );
 
   if (linkedAccount.rowCount === 0) {
-    throw new Error("This Roblox member has not linked a Discord account.");
+    throw new Error(
+      "This Roblox member has not linked a Discord account."
+    );
   }
 
   const account = linkedAccount.rows[0];
-  const targetMember = await guild.members.fetch(account.discord_id);
+
+  const targetMember = await guild.members.fetch(
+    account.discord_id
+  );
 
   const verifiedRole = guild.roles.cache.find(
     role => role.name === "Verified"
   );
 
-  if (!verifiedRole || !targetMember.roles.cache.has(verifiedRole.id)) {
-    throw new Error("The Discord member must have the Verified role first.");
+  if (
+    !verifiedRole ||
+    !targetMember.roles.cache.has(verifiedRole.id)
+  ) {
+    throw new Error(
+      "The Discord member must have the Verified role first."
+    );
   }
 
   const targetDiscordRoleName = getDiscordRankName(targetRank);
@@ -335,17 +350,23 @@ async function applyMemberRank(guild, robloxUserId, targetRank, action) {
   );
 
   if (!targetDiscordRole) {
-    throw new Error("Discord rank role not found: " + targetDiscordRoleName);
+    throw new Error(
+      "Discord rank role not found: " + targetDiscordRoleName
+    );
   }
 
   const membership = await getGroupMember(account.roblox_id);
 
   if (!membership) {
-    throw new Error("That Roblox user is not a member of our group.");
+    throw new Error(
+      "That Roblox user is not a member of our group."
+    );
   }
 
   if (!membership.path && !membership.name) {
-    throw new Error("Could not read Roblox membership information.");
+    throw new Error(
+      "Could not read Roblox membership information."
+    );
   }
 
   const membershipId = getMembershipId(membership);
@@ -365,7 +386,9 @@ async function applyMemberRank(guild, robloxUserId, targetRank, action) {
   );
 
   if (!currentRank) {
-    throw new Error("Could not determine the member's current rank.");
+    throw new Error(
+      "Could not determine the member's current rank."
+    );
   }
 
   const currentRankIndex = RANK_ORDER.indexOf(currentRank);
@@ -375,14 +398,18 @@ async function applyMemberRank(guild, robloxUserId, targetRank, action) {
     action === "promote" &&
     targetRankIndex >= currentRankIndex
   ) {
-    throw new Error("Promotion must be to a higher rank.");
+    throw new Error(
+      "Promotion must be to a higher rank."
+    );
   }
 
   if (
     action === "demote" &&
     targetRankIndex <= currentRankIndex
   ) {
-    throw new Error("Demotion must be to a lower rank.");
+    throw new Error(
+      "Demotion must be to a lower rank."
+    );
   }
 
   const managedRankIds = Object.values(RANKS).map(String);
@@ -482,12 +509,12 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.commandName === "link") {
-  const link = await createRobloxLink(interaction.user.id);
+      const link = await createRobloxLink(interaction.user.id);
 
-  return interaction.editReply(
-    "Click here to connect your Roblox account:\n" + link
-  );
-}
+      return interaction.editReply(
+        "Click here to connect your Roblox account:\n" + link
+      );
+    }
 
     const actor = await interaction.guild.members.fetch(
       interaction.user.id
@@ -516,24 +543,25 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
-// SECURE GAME CONNECTION
+// CHECK GAME SECRET
 function checkGameSecret(received, expected) {
   if (typeof received !== "string" || !expected) {
     return false;
   }
 
-function isValidGameRequest(req) {
-  return checkGameSecret(
-    req.headers["x-game-secret"],
-    process.env.GAME_API_SECRET
-  );
-}
-  
   const a = Buffer.from(received);
   const b = Buffer.from(expected);
 
   return a.length === b.length &&
     crypto.timingSafeEqual(a, b);
+}
+
+// VALIDATE GAME REQUEST
+function isValidGameRequest(req) {
+  return checkGameSecret(
+    req.headers["x-game-secret"],
+    process.env.GAME_API_SECRET
+  );
 }
 
 // ROBLOX OAUTH CALLBACK
@@ -551,7 +579,10 @@ async function handleOAuthCallback(req, res) {
 
   if (oauthError || !code || !state) {
     res.writeHead(400);
-    return res.end("<h2>Roblox linking failed.</h2><p>Please try again using Discord /link.</p>");
+    return res.end(
+      "<h2>Roblox linking failed.</h2>" +
+      "<p>Please try again using Discord /link.</p>"
+    );
   }
 
   const result = await pool.query(
@@ -564,7 +595,10 @@ async function handleOAuthCallback(req, res) {
 
   if (result.rowCount === 0) {
     res.writeHead(400);
-    return res.end("<h2>Invalid or expired link request.</h2><p>Please try again using Discord /link.</p>");
+    return res.end(
+      "<h2>Invalid or expired link request.</h2>" +
+      "<p>Please try again using Discord /link.</p>"
+    );
   }
 
   const { discord_id, code_verifier } = result.rows[0];
@@ -578,8 +612,8 @@ async function handleOAuthCallback(req, res) {
       },
       body: new URLSearchParams({
         grant_type: "authorization_code",
-        code: code,
-        code_verifier: code_verifier,
+        code,
+        code_verifier,
         client_id: ROBLOX_OAUTH_CLIENT_ID,
         client_secret: process.env.ROBLOX_OAUTH_CLIENT_SECRET
       })
@@ -587,7 +621,9 @@ async function handleOAuthCallback(req, res) {
   );
 
   if (!tokenResponse.ok) {
-    throw new Error("Roblox token exchange failed: " + tokenResponse.status);
+    throw new Error(
+      "Roblox token exchange failed: " + tokenResponse.status
+    );
   }
 
   const tokenData = await tokenResponse.json();
@@ -602,13 +638,17 @@ async function handleOAuthCallback(req, res) {
   );
 
   if (!userResponse.ok) {
-    throw new Error("Roblox user information request failed.");
+    throw new Error(
+      "Roblox user information request failed."
+    );
   }
 
   const robloxUser = await userResponse.json();
 
   if (!robloxUser.sub || !robloxUser.preferred_username) {
-    throw new Error("Roblox account information is incomplete.");
+    throw new Error(
+      "Roblox account information is incomplete."
+    );
   }
 
   const existingLink = await pool.query(
@@ -621,7 +661,9 @@ async function handleOAuthCallback(req, res) {
 
   if (existingLink.rowCount > 0) {
     res.writeHead(409);
-    return res.end("<h2>This Roblox account is already linked to another Discord account.</h2>");
+    return res.end(
+      "<h2>This Roblox account is already linked to another Discord account.</h2>"
+    );
   }
 
   await pool.query(
@@ -675,75 +717,75 @@ function readJsonBody(req) {
 
 // HTTP SERVER
 const server = http.createServer(async (req, res) => {
-  
+  const requestUrl = new URL(
+    req.url,
+    "http://localhost"
+  );
+
+  const pathname = requestUrl.pathname;
+
   // GAME CONNECTION TEST
-if (req.url === "/game-test" && req.method === "GET") {
-  if (!isValidGameRequest(req)) {
-    res.writeHead(401, {
-      "Content-Type": "application/json"
-    });
+  if (req.method === "GET" && pathname === "/game-test") {
+    if (!isValidGameRequest(req)) {
+      res.writeHead(401, {
+        "Content-Type": "application/json"
+      });
 
-    return res.end(JSON.stringify({
-      authenticated: false,
-      error: "Unauthorized"
-    }));
-  }
-
-  res.writeHead(200, {
-    "Content-Type": "application/json"
-  });
-
-  return res.end(JSON.stringify({
-    authenticated: true,
-    message: "Roblox connection successful!"
-  }));
-}
-  res.setHeader("Content-Type", "application/json");
-
-  if (req.method === "GET" && req.url.startsWith("/oauth/callback")) {
-    handleOAuthCallback(req, res).catch(error => {
-      console.error("OAUTH CALLBACK ERROR:", error);
-
-      if (!res.headersSent) {
-        res.writeHead(500);
-        res.end("<h2>Roblox linking failed.</h2><p>Please try again later.</p>");
-      }
-    });
-
-    return;
-  }
-
-  if (req.method === "GET" && req.url === "/") {
-    res.writeHead(200);
-    return res.end(JSON.stringify({
-      status: "online",
-      service: "Roblox Discord Ranking Bot"
-    }));
-  }
-
-  if (req.method === "GET" && req.url === "/game-test") {
-    const received = req.headers["x-game-secret"];
-
-    if (!checkGameSecret(
-      received,
-      process.env.GAME_API_SECRET
-    )) {
-      res.writeHead(401);
       return res.end(JSON.stringify({
+        authenticated: false,
         error: "Unauthorized"
       }));
     }
 
-    res.writeHead(200);
+    res.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+
     return res.end(JSON.stringify({
       authenticated: true,
       message: "Roblox connection successful!"
     }));
   }
 
-  if (req.method === "POST" && req.url === "/game-rank") {
+  // OAUTH CALLBACK
+  if (req.method === "GET" && pathname === "/oauth/callback") {
+    handleOAuthCallback(req, res).catch(error => {
+      console.error("OAUTH CALLBACK ERROR:", error);
+
+      if (!res.headersSent) {
+        res.writeHead(500, {
+          "Content-Type": "text/html; charset=utf-8"
+        });
+
+        res.end(
+          "<h2>Roblox linking failed.</h2>" +
+          "<p>Please try again later.</p>"
+        );
+      }
+    });
+
+    return;
+  }
+
+  // ROOT STATUS
+  if (req.method === "GET" && pathname === "/") {
+    res.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+
+    return res.end(JSON.stringify({
+      status: "online",
+      service: "Roblox Discord Ranking Bot"
+    }));
+  }
+
+  // GAME RANK REQUEST
+  if (req.method === "POST" && pathname === "/game-rank") {
     if (!isValidGameRequest(req)) {
-      res.writeHead(401);
+      res.writeHead(401, {
+        "Content-Type": "application/json"
+      });
+
       return res.end(JSON.stringify({
         error: "Unauthorized"
       }));
@@ -754,39 +796,49 @@ if (req.url === "/game-test" && req.method === "GET") {
     try {
       body = await readJsonBody(req);
     } catch (error) {
-      res.writeHead(400);
+      res.writeHead(400, {
+        "Content-Type": "application/json"
+      });
+
       return res.end(JSON.stringify({
         error: "Invalid request body."
       }));
     }
 
-   const { robloxUserId, rank, action } = body;
-
-if (
-  typeof robloxUserId !== "number" ||
-  !Number.isSafeInteger(robloxUserId) ||
-  robloxUserId <= 0
-) {
-  res.writeHead(400);
-  return res.end(JSON.stringify({
-    error: "Invalid Roblox User ID."
-  }));
-}
+    const { robloxUserId, rank, action } = body;
 
     if (
-      !robloxUserId ||
+      typeof robloxUserId !== "number" ||
+      !Number.isSafeInteger(robloxUserId) ||
+      robloxUserId <= 0
+    ) {
+      res.writeHead(400, {
+        "Content-Type": "application/json"
+      });
+
+      return res.end(JSON.stringify({
+        error: "Invalid Roblox User ID."
+      }));
+    }
+
+    if (
       !rank ||
       !Object.keys(RANKS).includes(rank) ||
       !["promote", "demote"].includes(action)
     ) {
-      res.writeHead(400);
+      res.writeHead(400, {
+        "Content-Type": "application/json"
+      });
+
       return res.end(JSON.stringify({
         error: "Invalid rank request."
       }));
     }
 
-   try {
-      const guild = await client.guilds.fetch(DISCORD_GUILD_ID);
+    try {
+      const guild = await client.guilds.fetch(
+        DISCORD_GUILD_ID
+      );
 
       const result = await applyMemberRank(
         guild,
@@ -795,7 +847,10 @@ if (
         action
       );
 
-      res.writeHead(200);
+      res.writeHead(200, {
+        "Content-Type": "application/json"
+      });
+
       return res.end(JSON.stringify({
         success: true,
         message: "Rank update successful!",
@@ -807,28 +862,41 @@ if (
     } catch (error) {
       console.error("GAME RANK ERROR:", error);
 
-      res.writeHead(400);
+      res.writeHead(400, {
+        "Content-Type": "application/json"
+      });
+
       return res.end(JSON.stringify({
         success: false,
         error: error.message
       }));
     }
   }
-  
-  res.writeHead(404);
-  res.end(JSON.stringify({
+
+  // NOT FOUND
+  res.writeHead(404, {
+    "Content-Type": "application/json"
+  });
+
+  return res.end(JSON.stringify({
     error: "Not Found"
   }));
 });
 
-server.listen(process.env.PORT || 3000, "0.0.0.0", () => {
-  console.log("GAME API SERVER ONLINE!");
-});
+// START HTTP SERVER
+server.listen(
+  process.env.PORT || 3000,
+  "0.0.0.0",
+  () => {
+    console.log("GAME API SERVER ONLINE!");
+  }
+);
 
+// START DATABASE AND DISCORD BOT
 initializeDatabase()
   .then(() => {
     return client.login(process.env.DISCORD_TOKEN);
   })
   .catch(error => {
-    console.error("DATABASE CONNECTION FAILED:", error);
+    console.error("DATABASE OR DISCORD STARTUP FAILED:", error);
   });
