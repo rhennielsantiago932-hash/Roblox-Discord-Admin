@@ -43,6 +43,14 @@ const rankChoices = [
   { name: "Vendor", value: "VENDOR" }
 ];
 
+const RANK_ORDER = [
+  "OWNER",
+  "DEVELOPER",
+  "ADMIN",
+  "STAFF_TEAM",
+  "VENDOR"
+];
+  
 function getDiscordRankName(rankName) {
   return rankName
     .toLowerCase()
@@ -290,90 +298,108 @@ const membership = await getGroupMember(user.id);
   );
 }
 
-// CHANGE MEMBER RANK
-async function changeMemberRank(interaction, action) {
-  const targetDiscordUser = interaction.options.getUser("member");
-  
-  const targetRank = interaction.options.getString("rank");
+// APPLY MEMBER RANK
+async function applyMemberRank(guild, robloxUserId, targetRank, action) {
   const targetRoleId = RANKS[targetRank];
 
   if (!targetRoleId) {
-    return interaction.editReply("Invalid target rank.");
+    throw new Error("Invalid target rank.");
   }
 
-  const targetMember = await interaction.guild.members.fetch(
-    targetDiscordUser.id
+  const linkedAccount = await pool.query(
+    `SELECT discord_id, roblox_id, roblox_username
+     FROM account_links
+     WHERE roblox_id = $1`,
+    [String(robloxUserId)]
   );
 
-  const verifiedRole = interaction.guild.roles.cache.find(
+  if (linkedAccount.rowCount === 0) {
+    throw new Error("This Roblox member has not linked a Discord account.");
+  }
+
+  const account = linkedAccount.rows[0];
+  const targetMember = await guild.members.fetch(account.discord_id);
+
+  const verifiedRole = guild.roles.cache.find(
     role => role.name === "Verified"
   );
 
   if (!verifiedRole || !targetMember.roles.cache.has(verifiedRole.id)) {
-    return interaction.editReply(
-      "The selected Discord member must have the Verified role first."
-    );
+    throw new Error("The Discord member must have the Verified role first.");
   }
 
   const targetDiscordRoleName = getDiscordRankName(targetRank);
 
-  const targetDiscordRole = interaction.guild.roles.cache.find(
+  const targetDiscordRole = guild.roles.cache.find(
     role => role.name === targetDiscordRoleName
   );
 
   if (!targetDiscordRole) {
-    return interaction.editReply(
-      "Discord rank role not found: " + targetDiscordRoleName
-    );
+    throw new Error("Discord rank role not found: " + targetDiscordRoleName);
   }
 
-  const linkedAccount = await pool.query(
-  `SELECT roblox_id, roblox_username
-   FROM account_links
-   WHERE discord_id = $1`,
-  [targetDiscordUser.id]
-);
-
-if (linkedAccount.rowCount === 0) {
-  return interaction.editReply(
-    "This Discord member has not linked a Roblox account yet."
-  );
-}
-
-const user = {
-  id: linkedAccount.rows[0].roblox_id,
-  name: linkedAccount.rows[0].roblox_username
-};
-
-  const membership = await getGroupMember(user.id);
+  const membership = await getGroupMember(account.roblox_id);
 
   if (!membership) {
-    return interaction.editReply(
-      "That Roblox user is not a member of our group."
-    );
+    throw new Error("That Roblox user is not a member of our group.");
   }
 
- if (!membership.path && !membership.name) {
-  return interaction.editReply(
-    "Could not read Roblox membership information."
-  );
-}
+  if (!membership.path && !membership.name) {
+    throw new Error("Could not read Roblox membership information.");
+  }
 
   const membershipId = getMembershipId(membership);
 
   const currentRolePaths = Array.isArray(membership.roles)
-  ? membership.roles
-  : membership.role
-    ? [membership.role]
-    : [];
+    ? membership.roles
+    : membership.role
+      ? [membership.role]
+      : [];
 
-const currentRoleIds = currentRolePaths.map(
-  path => String(path).split("/").pop()
-);
+  const currentRoleIds = currentRolePaths.map(
+    path => String(path).split("/").pop()
+  );
 
-if (!currentRoleIds.includes(String(targetRoleId))) {
-  await assignGroupRole(membershipId, targetRoleId);
-}
+  const currentRank = RANK_ORDER.find(
+    rank => currentRoleIds.includes(String(RANKS[rank]))
+  );
+
+  if (!currentRank) {
+    throw new Error("Could not determine the member's current rank.");
+  }
+
+  const currentRankIndex = RANK_ORDER.indexOf(currentRank);
+  const targetRankIndex = RANK_ORDER.indexOf(targetRank);
+
+  if (
+    action === "promote" &&
+    targetRankIndex >= currentRankIndex
+  ) {
+    throw new Error("Promotion must be to a higher rank.");
+  }
+
+  if (
+    action === "demote" &&
+    targetRankIndex <= currentRankIndex
+  ) {
+    throw new Error("Demotion must be to a lower rank.");
+  }
+
+  const managedRankIds = Object.values(RANKS).map(String);
+
+  const oldRankIds = managedRankIds.filter(
+    id =>
+      currentRoleIds.includes(id) &&
+      id !== String(targetRoleId)
+  );
+
+  if (!currentRoleIds.includes(String(targetRoleId))) {
+    await assignGroupRole(membershipId, targetRoleId);
+  }
+
+  for (const oldRankId of oldRankIds) {
+    await unassignGroupRole(membershipId, oldRankId);
+  }
 
   const managedDiscordNames = Object.keys(RANKS).map(
     getDiscordRankName
@@ -391,13 +417,49 @@ if (!currentRoleIds.includes(String(targetRoleId))) {
 
   await targetMember.roles.add(targetDiscordRole);
 
-  return interaction.editReply(
-    "Rank update successful!\n\n" +
-    "Discord Member: **" + targetDiscordUser.tag + "**\n" +
-    "Roblox Username: **" + user.name + "**\n" +
-    "New Rank: **" + targetDiscordRoleName + "**\n" +
-    "Action: " + action.toUpperCase() + ""
+  return {
+    discordUsername: targetMember.user.tag,
+    robloxUsername: account.roblox_username,
+    newRank: targetDiscordRoleName
+  };
+}
+
+// DISCORD COMMAND RANK HANDLER
+async function changeMemberRank(interaction, action) {
+  const targetDiscordUser = interaction.options.getUser("member");
+  const targetRank = interaction.options.getString("rank");
+
+  const linkedAccount = await pool.query(
+    `SELECT roblox_id
+     FROM account_links
+     WHERE discord_id = $1`,
+    [targetDiscordUser.id]
   );
+
+  if (linkedAccount.rowCount === 0) {
+    return interaction.editReply(
+      "This Discord member has not linked a Roblox account yet."
+    );
+  }
+
+  try {
+    const result = await applyMemberRank(
+      interaction.guild,
+      linkedAccount.rows[0].roblox_id,
+      targetRank,
+      action
+    );
+
+    return interaction.editReply(
+      "Rank update successful!\n\n" +
+      "Discord Member: **" + result.discordUsername + "**\n" +
+      "Roblox Username: **" + result.robloxUsername + "**\n" +
+      "New Rank: **" + result.newRank + "**\n" +
+      "Action: " + action.toUpperCase()
+    );
+  } catch (error) {
+    return interaction.editReply(error.message);
+  }
 }
 
 // INTERACTION HANDLER
@@ -460,6 +522,13 @@ function checkGameSecret(received, expected) {
     return false;
   }
 
+function isValidGameRequest(req) {
+  return checkGameSecret(
+    req.headers["x-game-secret"],
+    process.env.GAME_API_SECRET
+  );
+}
+  
   const a = Buffer.from(received);
   const b = Buffer.from(expected);
 
@@ -578,8 +647,34 @@ async function handleOAuthCallback(req, res) {
   );
 }
 
+// READ JSON REQUEST BODY
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+
+    req.on("data", chunk => {
+      body += chunk;
+
+      if (body.length > 10000) {
+        reject(new Error("Request body too large."));
+        req.destroy();
+      }
+    });
+
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new Error("Invalid JSON request."));
+      }
+    });
+
+    req.on("error", reject);
+  });
+}
+
 // HTTP SERVER
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
   if (req.method === "GET" && req.url.startsWith("/oauth/callback")) {
@@ -623,6 +718,80 @@ const server = http.createServer((req, res) => {
     }));
   }
 
+  if (req.method === "POST" && req.url === "/game-rank") {
+    if (!isValidGameRequest(req)) {
+      res.writeHead(401);
+      return res.end(JSON.stringify({
+        error: "Unauthorized"
+      }));
+    }
+
+    let body;
+
+    try {
+      body = await readJsonBody(req);
+    } catch (error) {
+      res.writeHead(400);
+      return res.end(JSON.stringify({
+        error: "Invalid request body."
+      }));
+    }
+
+   const { robloxUserId, rank, action } = body;
+
+if (
+  typeof robloxUserId !== "number" ||
+  !Number.isSafeInteger(robloxUserId) ||
+  robloxUserId <= 0
+) {
+  res.writeHead(400);
+  return res.end(JSON.stringify({
+    error: "Invalid Roblox User ID."
+  }));
+}
+
+    if (
+      !robloxUserId ||
+      !rank ||
+      !Object.keys(RANKS).includes(rank) ||
+      !["promote", "demote"].includes(action)
+    ) {
+      res.writeHead(400);
+      return res.end(JSON.stringify({
+        error: "Invalid rank request."
+      }));
+    }
+
+   try {
+      const guild = await client.guilds.fetch(DISCORD_GUILD_ID);
+
+      const result = await applyMemberRank(
+        guild,
+        robloxUserId,
+        rank,
+        action
+      );
+
+      res.writeHead(200);
+      return res.end(JSON.stringify({
+        success: true,
+        message: "Rank update successful!",
+        discordUsername: result.discordUsername,
+        robloxUsername: result.robloxUsername,
+        newRank: result.newRank
+      }));
+
+    } catch (error) {
+      console.error("GAME RANK ERROR:", error);
+
+      res.writeHead(400);
+      return res.end(JSON.stringify({
+        success: false,
+        error: error.message
+      }));
+    }
+  }
+  
   res.writeHead(404);
   res.end(JSON.stringify({
     error: "Not Found"
