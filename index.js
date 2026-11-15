@@ -26,6 +26,7 @@ const {
 const {
   getRobloxUser,
   getGroupMember,
+  getMembershipId,
   assignGroupRole,
   unassignGroupRole
 } = require("./roblox");
