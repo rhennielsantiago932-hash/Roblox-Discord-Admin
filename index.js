@@ -1,4 +1,5 @@
 require("dotenv").config();
+const http = require("node:http")
 
 const {
   Client,
@@ -422,6 +423,26 @@ client.on(Events.InteractionCreate, async interaction => {
       "Rank operation failed. Please check Railway logs."
     );
   }
+});
+
+const server = http.createServer((req, res) => {
+  if (req.method === "GET" && req.url === "/") {
+    res.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+
+    return res.end(JSON.stringify({
+      status: "online",
+      service: "Roblox Discord Ranking Bot"
+    }));
+  }
+
+  res.writeHead(404);
+  res.end("Not Found");
+});
+
+server.listen(process.env.PORT || 3000, "0.0.0.0", () => {
+  console.log("GAME API SERVER ONLINE!");
 });
 
 client.login(process.env.DISCORD_TOKEN);
